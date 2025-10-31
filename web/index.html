@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>Qt Secure Server – Demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <style>
+    :root {
+      --muted:#666; --ok:#2a7; --err:#b33; --bg:#f7f7f8; --line:#ddd; --ink:#111;
+      --pill:#0366d6;
+    }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; margin: 1.5rem; color: var(--ink); background: white; }
+    nav { display:flex; gap:.6rem; margin-bottom:1rem; flex-wrap:wrap; }
+    nav button { padding:.5rem .8rem; cursor:pointer; border:1px solid var(--line); border-radius:.5rem; background:#fff; }
+    nav button.active { background: var(--pill); color:white; border-color: var(--pill); }
+    .page { display:none; }
+    .page.active { display:block; animation: fade .18s ease; }
+    @keyframes fade { from {opacity:0} to {opacity:1} }
+    .row { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin:.5rem 0; }
+    input,button { padding:.45rem .6rem; }
+    input[type="file"] { padding:.25rem; }
+    label { font-size:.92rem; color:#222; }
+    code { background:#f5f5f5; padding:.15rem .3rem; border-radius:.25rem; }
+    canvas { width:100%; height:280px; border:1px solid var(--line); background: #fff; }
+    table { border-collapse: collapse; width: 100%; background:#fff; }
+    th, td { border:1px solid var(--line); padding:.4rem; text-align:left; font-size:.95rem; vertical-align: middle; }
+    thead th { background: var(--bg); }
+    pre.log { background:#111;color:#ddd;padding:10px; height:260px; overflow:auto; border-radius:.25rem; }
+    small.muted { color:var(--muted) }
+    .ok { color:var(--ok) }
+    .err{ color:var(--err) }
+    .pill { display:inline-block; padding:.15rem .5rem; border-radius:1rem; background:#e9eefc; color:#173; font-size:.82rem; }
+    .grid { display:grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(260px,1fr)); }
+    .card { border:1px solid var(--line); border-radius:.5rem; padding:.75rem; background:#fff; }
+    /* Progress inline bar */
+    .pbar { position: relative; width: 120px; height: 10px; border: 1px solid var(--line); border-radius: 6px; background: #f1f1f1; overflow: hidden; }
+    .pbar > span { display:block; height:100%; background: #2a7; width:0%; transition: width .2s ease; }
+    .state { font-weight: 600; font-size:.9rem; padding:.1rem .4rem; border-radius:.4rem; color:#fff; }
+    .s-queued{ background:#607D8B; }
+    .s-downloading{ background:#1976D2; }
+    .s-installing{ background:#6A1B9A; }
+    .s-done{ background:#2E7D32; }
+    .s-failed{ background:#C62828; }
+  </style>
+</head>
+<body>
+  <h1>Qt Secure Server</h1>
+
+  <nav>
+    <button data-page="home" class="active">Home</button>
+    <button data-page="live">Live</button>
+    <button data-page="ota">OTA</button>
+  </nav>
+
+  <!-- ===================== HOME ===================== -->
+  <section id="home" class="page active">
+    <h2>Home</h2>
+
+    <div class="grid">
+      <div class="card">
+        <h3>Zahl senden</h3>
+        <form id="frmNumber" class="row">
+          <label>Zahl:
+            <input type="number" name="value" required />
+          </label>
+          <button type="submit">Senden</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h3>Login</h3>
+        <div class="row">
+          <input id="user" placeholder="user" value="admin" autocomplete="username">
+          <input id="pass" placeholder="passwort" type="password" value="secret_admin" autocomplete="current-password">
+          <button id="btnLogin">Login (HTTP)</button>
+          <span id="loginMsg" class="small muted"></span>
+        </div>
+        <div class="row">
+          <button id="btnShowJwt">JWT anzeigen</button>
+          <button id="btnLogout">Logout</button>
+        </div>
+      </div>
+    </div>
+
+    <h3>Sensor Latest</h3>
+    <div class="row">
+      <input id="limit" type="number" placeholder="Limit" value="10" min="1" style="max-width:120px">
+      <button id="btnLoad">Laden</button>
+    </div>
+    <table>
+      <thead><tr><th>ID</th><th>Name</th><th>Value</th></tr></thead>
+      <tbody id="latestBody"></tbody>
+    </table>
+  </section>
+
+  <!-- ===================== LIVE ===================== -->
+  <section id="live" class="page">
+    <h2>Live</h2>
+    <div class="row">
+      <input id="wsUrl" placeholder="wss://host:9443" style="min-width:18rem">
+      <button id="btnWs">Verbinden/Trennen</button>
+      <span id="wsStatus" class="small muted"></span>
+    </div>
+    <canvas id="chart" width="800" height="280"></canvas>
+
+    <h3>Live Events</h3>
+    <pre id="log" class="log"></pre>
+  </section>
+
+  <!-- ===================== OTA ===================== -->
+  <section id="ota" class="page">
+    <h2>OTA Admin</h2>
+    <p class="small muted">Login nötig (JWT). Datei-Upload via <code>PUT /api/ota/upload</code>, Zuordnung via <code>POST /api/ota/assign</code>.</p>
+
+    <!-- Devices -->
+    <h3>Devices</h3>
+    <div class="row">
+      <button id="btnListDevs">Liste laden</button>
+      <span id="devMsg" class="small muted"></span>
+    </div>
+    <table>
+      <thead>
+        <tr><th>ID</th><th>Key</th><th>Enabled</th><th>Firmware</th><th>Last seen</th></tr>
+      </thead>
+      <tbody id="devBody"></tbody>
+    </table>
+
+    <!-- Upload -->
+    <h3>Firmware hochladen</h3>
+    <div class="row">
+      <label>Datei<br><input id="otaFile" type="file" accept=".bin,.img,.fw,.bin.gz,.img.gz,.fw.gz"></label>
+      <label>Name (optional)<br><input id="otaName" placeholder="fw.bin"></label>
+      <button id="btnUpload">Upload</button>
+      <span id="otaMsg" class="small muted"></span>
+    </div>
+
+    <!-- Assign -->
+    <h3>Job zuweisen</h3>
+    <div class="row">
+      <label>Device Key<br><input id="devKey" placeholder="key_id (device)"></label>
+      <label>File ID<br><input id="fileId" placeholder="1"></label>
+      <button id="btnAssign">Assign</button>
+      <span id="assignMsg" class="small muted"></span>
+    </div>
+
+    <!-- ===================== OTA Monitoring Panel ===================== -->
+    <h2>Monitoring</h2>
+
+    <div class="row">
+      <strong>Jobs</strong>
+      <button id="btnLoadJobs">Jobs laden</button>
+      <label style="margin-left:1rem;"><input type="checkbox" id="autoJobs"> Auto-Refresh 2s</label>
+      <span id="jobsMsg" class="small muted"></span>
+    </div>
+    <table>
+      <thead>
+        <tr><th>ID</th><th>Device</th><th>File ID</th><th>State</th><th>Progress</th><th>Updated</th></tr>
+      </thead>
+      <tbody id="jobsBody"></tbody>
+    </table>
+
+    <div class="row" style="margin-top:1rem;">
+      <strong>Files</strong>
+      <button id="btnLoadFiles">Dateien laden</button>
+      <label style="margin-left:1rem;"><input type="checkbox" id="autoFiles"> Auto-Refresh 2s</label>
+      <span id="filesMsg" class="small muted"></span>
+    </div>
+    <table>
+      <thead>
+        <tr><th>ID</th><th>Name</th><th>Size</th><th>SHA256</th><th>Uploaded</th></tr>
+      </thead>
+      <tbody id="filesBody"></tbody>
+    </table>
+  </section>
+
+  <script>
+    // ---------- Navigation ----------
+    document.querySelectorAll('nav button').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
+        b.classList.add('active');
+        document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+        document.getElementById(b.dataset.page).classList.add('active');
+      });
+    });
+
+    // ---------- Helpers ----------
+    const $ = sel => document.querySelector(sel);
+    const log = (...a) => { const el = $("#log"); if (el) { el.textContent += a.join(" ")+"\n"; el.scrollTop = el.scrollHeight; } };
+    const setText = (sel, text, cls) => { const el=$(sel); if (!el) return; el.textContent=text; el.className = (cls||'small muted'); };
+
+    function fmtTs(sec){ return sec ? new Date(sec*1000).toLocaleString() : ''; }
+    function stateClass(s){ return "state s-" + (s||"").toLowerCase(); }
+
+    // Fetch-Helper mit optionalem Bearer (JWT) & Binär und 401-Hinweis
+    async function http(method, path, {body, bearer, headers} = {}) {
+      const opts = { method, headers: { ...(headers||{}) } };
+      if (body instanceof ArrayBuffer || body instanceof Blob || body instanceof Uint8Array) {
+        opts.body = body;
+      } else if (body != null) {
+        opts.headers["Content-Type"] = "application/json";
+        opts.body = JSON.stringify(body);
+      }
+      if (bearer) opts.headers["Authorization"] = "Bearer " + bearer;
+
+      const res  = await fetch(path, opts);
+      const text = await res.text();
+      let data=null; try { data = JSON.parse(text); } catch {}
+      if (res.status === 401) setText("#loginMsg","401 – bitte neu einloggen","err");
+      return {status: res.status, data, text, headers: res.headers};
+    }
+
+    // ---------- Zahl submit ----------
+    $("#frmNumber").addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const r = await fetch('/submit',{method:'POST', body:new URLSearchParams(fd)});
+      alert(await r.text());
+      e.target.reset();
+    });
+
+    // ---------- Login (/login → JWT) ----------
+    $("#btnLogin").addEventListener('click', async ()=>{
+      const user = $("#user").value.trim();
+      const pass = $("#pass").value;
+      setText("#loginMsg","Login…");
+      try {
+        const r = await fetch('/login',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({user, pass})});
+        const j = await r.json().catch(()=>({}));
+        if (j.token) {
+          localStorage.setItem('token', j.token);
+          setText("#loginMsg","ok (JWT gespeichert)","ok");
+        } else {
+          setText("#loginMsg","Fehler beim Login","err");
+        }
+      } catch (e) {
+        setText("#loginMsg","Netzwerkfehler","err");
+      }
+    });
+    $("#btnShowJwt").addEventListener('click', ()=>{
+      const tok = localStorage.getItem('token')||'(kein Token)';
+      alert(tok);
+    });
+    $("#btnLogout").addEventListener('click', ()=>{
+      localStorage.removeItem('token');
+      setText("#loginMsg","abgemeldet");
+    });
+
+    // ---------- Sensor latest ----------
+    $("#btnLoad").addEventListener('click', async ()=>{
+      const limit = $("#limit").value || 10;
+      const r = await fetch('/api/sensor/latest?limit='+encodeURIComponent(limit));
+      const j = await r.json().catch(()=>({items:[]}));
+      const tbody = $("#latestBody"); tbody.innerHTML='';
+      (j.items||[]).forEach(it=>{
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${it.id}</td><td>${it.name}</td><td>${it.value}</td>`;
+        tbody.appendChild(tr);
+      });
+    });
+
+    // ---------- Live-Chart ----------
+    const canvas = document.getElementById('chart');
+    const ctx = canvas ? canvas.getContext('2d') : null;
+    const data = []; const MAX=100;
+    function draw() {
+      if (!ctx) return;
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.beginPath(); ctx.moveTo(40,10); ctx.lineTo(40,260); ctx.lineTo(790,260); ctx.strokeStyle="#999"; ctx.stroke();
+      if (data.length<2) return;
+      const min = Math.min(...data), max = Math.max(...data);
+      const range = (max-min)||1;
+      ctx.beginPath();
+      data.forEach((v,i)=>{
+        const x = 40 + i*(750/(MAX-1));
+        const y = 260 - ((v-min)/range)*240;
+        if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      });
+      ctx.strokeStyle="#0366d6"; ctx.lineWidth=2; ctx.stroke();
+    }
+    function pushValue(v){ if (!isFinite(v)) return; data.push(v); if (data.length>MAX) data.shift(); draw(); }
+
+    // ---------- WebSocket ----------
+    let ws=null;
+    const defaultWsUrl = `wss://${location.hostname}:9443`;
+    document.addEventListener('DOMContentLoaded', ()=>{ const el=$("#wsUrl"); if (el && !el.value) el.value = defaultWsUrl; });
+
+    $("#btnWs").addEventListener('click', ()=>{
+      if (ws && (ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING)) { ws.close(); ws=null; setText("#wsStatus","Getrennt"); return; }
+      const url = $("#wsUrl").value.trim() || defaultWsUrl;
+      setText("#wsStatus","Verbinde…");
+      ws = new WebSocket(url);
+      ws.onopen = ()=>{
+        setText("#wsStatus","Verbunden");
+        const token = localStorage.getItem('token')||'';
+        try { ws.send(JSON.stringify({cmd:'auth', token})); } catch {}
+      };
+      ws.onmessage = (ev)=>{
+        log("WS <", ev.data);
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.status==="ok" && msg.msg==="authenticated") setText("#wsStatus","Authentifiziert","ok");
+          if (msg.status==="error" && msg.code==="unauthorized") { setText("#wsStatus","WS 401 – neu einloggen","err"); ws.close(); return; }
+          if (msg.sensor) {
+            const vals = msg.sensor.values||{};
+            const firstNum = Object.values(vals).map(v=>Number(v)).find(v=>isFinite(v));
+            if (firstNum!=null) pushValue(firstNum);
+          }
+          if (msg.value!=null) pushValue(Number(msg.value));
+        } catch {
+          const num = Number(ev.data);
+          if (!Number.isNaN(num)) pushValue(num);
+        }
+      };
+      ws.onclose = ()=> setText("#wsStatus","Getrennt");
+      ws.onerror = ()=> setText("#wsStatus","WS-Fehler","err");
+    });
+
+    // ---------- OTA: Upload ----------
+    async function sha256HexOfFile(file) {
+      const buf = await file.arrayBuffer();
+      const digest = await crypto.subtle.digest("SHA-256", buf);
+      return [...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('');
+    }
+
+    $("#btnUpload").addEventListener('click', async ()=>{
+      const f = $("#otaFile").files[0];
+      if (!f) { setText("#otaMsg","Bitte Datei wählen","err"); return; }
+      const name = $("#otaName").value.trim();
+      const token = localStorage.getItem('token')||'';
+      if (!token) { setText("#otaMsg","Bitte zuerst einloggen (JWT)","err"); return; }
+
+      setText("#otaMsg","Berechne SHA256…");
+      let preSha = ""; try { preSha = await sha256HexOfFile(f); } catch {}
+      const path = name ? `/api/ota/upload?name=${encodeURIComponent(name)}` : `/api/ota/upload`;
+
+      setText("#otaMsg","Upload…");
+      const {status, data, text} = await http("PUT", path, { body: f, bearer: token });
+      if (status===200 && data?.file_id) {
+        $("#fileId").value = data.file_id;
+        const match = (data.sha256 && preSha) ? (data.sha256.toLowerCase()===preSha.toLowerCase() ? " (SHA ok)" : " (SHA MISMATCH)") : "";
+        setText("#otaMsg",`OK: id=${data.file_id}, size=${data.size}, sha256=${data.sha256}${match}`,"ok");
+        log("UPLOAD <", JSON.stringify(data));
+      } else {
+        setText("#otaMsg",`Fehler: ${status} ${text||''}`,"err");
+      }
+    });
+
+    // ---------- OTA: Assign ----------
+    $("#btnAssign").addEventListener('click', async ()=>{
+      const token = localStorage.getItem('token')||'';
+      if (!token) { setText("#assignMsg","Bitte zuerst einloggen (JWT)","err"); return; }
+      const device_key = $("#devKey").value.trim();
+      const file_id    = parseInt($("#fileId").value,10);
+      if (!device_key || !file_id) { setText("#assignMsg","device_key und file_id angeben","err"); return; }
+
+      setText("#assignMsg","Sende…");
+      const {status, data, text} = await http("POST","/api/ota/assign",{ bearer: token, body:{ device_key, file_id }});
+      if (status===200 && data?.job_id) {
+        setText("#assignMsg",`OK: job_id=${data.job_id}`,"ok");
+        log("ASSIGN <", JSON.stringify(data));
+        // nach dem Anlegen gleich Monitoring aktualisieren
+        loadJobs();
+      } else {
+        setText("#assignMsg",`Fehler: ${status} ${text||''}`,"err");
+      }
+    });
+
+    // ---------- Devices: Liste ----------
+    document.getElementById('btnListDevs').addEventListener('click', loadDevices);
+    async function loadDevices(){
+      const token = localStorage.getItem('token')||'';
+      if (!token) { setText("#devMsg","Bitte einloggen (JWT)","err"); return; }
+      setText("#devMsg","Lade…");
+      try {
+        const r = await fetch('/api/devices', { headers: { 'Authorization': 'Bearer '+token }});
+        const t = await r.text(); let j=null; try{ j=JSON.parse(t); }catch{}
+        if (r.status!==200 || !j) { setText("#devMsg","Fehler: "+r.status,"err"); return; }
+        const tb = document.getElementById('devBody'); tb.innerHTML='';
+        (j.items||[]).forEach(d=>{
+          const tr = document.createElement('tr');
+          const last = fmtTs(d.last_seen);
+          tr.innerHTML = `<td>${d.id}</td><td>${d.key_id}</td><td>${d.enabled ? 'yes':'no'}</td>`+
+                         `<td>${d.firmware||''}</td><td>${last}</td>`;
+          tb.appendChild(tr);
+        });
+        setText("#devMsg",`OK (${(j.items||[]).length} Geräte)`,"ok");
+      } catch (e) {
+        setText("#devMsg","Netzwerkfehler","err");
+      }
+    }
+
+    // ---------- Monitoring: Files ----------
+    document.getElementById('btnLoadFiles').addEventListener('click', loadFiles);
+    async function loadFiles(){
+      const token = localStorage.getItem('token')||'';
+      if (!token) { setText("#filesMsg","Bitte einloggen (JWT)","err"); return; }
+      setText("#filesMsg","Lade…");
+      const {status, data, text} = await http("GET","/api/ota/files?limit=200", { bearer: token });
+      if (status!==200 || !data) { setText("#filesMsg",`Fehler: ${status}`,"err"); return; }
+      const tb = $("#filesBody"); tb.innerHTML='';
+      (data.items||[]).forEach(f=>{
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+          `<td>${f.id}</td><td>${f.name}</td><td>${f.size}</td><td><code>${(f.sha256||'').slice(0,16)}…</code></td><td>${fmtTs(f.uploaded_at)}</td>`;
+        tb.appendChild(tr);
+      });
+      setText("#filesMsg",`OK (${(data.items||[]).length} Dateien)`,"ok");
+    }
+
+    // ---------- Monitoring: Jobs ----------
+    document.getElementById('btnLoadJobs').addEventListener('click', loadJobs);
+    function renderPbar(pct){
+      const p = Math.max(0, Math.min(100, Number(pct)||0));
+      return `<div class="pbar"><span style="width:${p}%"></span></div> ${p}%`;
+    }
+    async function loadJobs(){
+      const token = localStorage.getItem('token')||'';
+      if (!token) { setText("#jobsMsg","Bitte einloggen (JWT)","err"); return; }
+      setText("#jobsMsg","Lade…");
+      const {status, data, text} = await http("GET","/api/ota/jobs?limit=200", { bearer: token });
+      if (status!==200 || !data) { setText("#jobsMsg",`Fehler: ${status}`,"err"); return; }
+      const tb = $("#jobsBody"); tb.innerHTML='';
+      (data.items||[]).forEach(j=>{
+        const tr = document.createElement('tr');
+        const s = (j.state||'').toLowerCase();
+        tr.innerHTML =
+          `<td>${j.id}</td><td>${j.device_key}</td><td>${j.file_id}</td>`+
+          `<td><span class="${stateClass(s)}">${j.state}</span></td>`+
+          `<td>${renderPbar(j.progress)}</td><td>${fmtTs(j.updated_at)}</td>`;
+        tb.appendChild(tr);
+      });
+      setText("#jobsMsg",`OK (${(data.items||[]).length} Jobs)`,"ok");
+    }
+
+    // ---------- Auto-Refresh ----------
+    let jobsTimer=null, filesTimer=null;
+    $("#autoJobs").addEventListener('change', (e)=>{
+      if (e.target.checked) {
+        loadJobs();
+        jobsTimer = setInterval(loadJobs, 2000);
+      } else if (jobsTimer) {
+        clearInterval(jobsTimer); jobsTimer=null;
+      }
+    });
+    $("#autoFiles").addEventListener('change', (e)=>{
+      if (e.target.checked) {
+        loadFiles();
+        filesTimer = setInterval(loadFiles, 2000);
+      } else if (filesTimer) {
+        clearInterval(filesTimer); filesTimer=null;
+      }
+    });
+
+    // ---------- Defaults ----------
+    document.addEventListener('DOMContentLoaded', ()=>{
+      const el=$("#wsUrl"); if (el && !el.value) el.value = `wss://${location.hostname}:9443`;
+    });
+  </script>
+</body>
+</html>

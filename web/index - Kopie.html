@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>Qt Secure Server – Demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; margin: 1.5rem; }
+    nav { display:flex; gap: .8rem; margin-bottom: 1rem; }
+    nav button { padding:.5rem .8rem; cursor:pointer; }
+    .page { display:none; }
+    .page.active { display:block; }
+    .row { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin:.5rem 0; }
+    input,button { padding:.45rem .6rem; }
+    code { background:#f5f5f5; padding:.15rem .3rem; }
+    canvas { width:100%; height:280px; border:1px solid #ddd; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border:1px solid #ddd; padding:.4rem; }
+  </style>
+</head>
+<body>
+  <h1>Qt Secure Server</h1>
+  <nav>
+    <button data-page="home">Home</button>
+    <button data-page="live">Live</button>
+    <button data-page="ota">OTA</button>
+  </nav>
+
+  <section id="home" class="page active">
+    <h2>Home</h2>
+    <div class="row">
+      <form id="frmNumber">
+        <label>Zahl: <input type="number" name="value" required /></label>
+        <button type="submit">Senden</button>
+      </form>
+    </div>
+
+    <h3>Login</h3>
+    <div class="row">
+      <input id="user" placeholder="user">
+      <input id="pass" placeholder="passwort" type="password">
+      <button id="btnLogin">Login</button>
+      <span id="loginMsg"></span>
+    </div>
+
+    <h3>Sensor Latest</h3>
+    <div class="row">
+      <input id="limit" type="number" placeholder="Limit" value="10">
+      <button id="btnLoad">Laden</button>
+    </div>
+    <table>
+      <thead><tr><th>ID</th><th>Name</th><th>Value</th></tr></thead>
+      <tbody id="latestBody"></tbody>
+    </table>
+  </section>
+
+  <section id="live" class="page">
+    <h2>Live</h2>
+    <div class="row">
+      <input id="wsUrl" placeholder="wss://host:9443" style="min-width:18rem">
+      <button id="btnWs">Verbinden</button>
+      <span id="wsStatus"></span>
+    </div>
+    <canvas id="chart" width="800" height="280"></canvas>
+  </section>
+
+  <section id="ota" class="page">
+    <h2>OTA Upload</h2>
+    <div class="row">
+      <input id="fw" type="file" accept=".bin,.img,.fw">
+      <button id="btnOta">Upload</button>
+      <span id="otaMsg"></span>
+    </div>
+    <p class="hint">Upload sendet per <code>PUT /api/ota</code> die Binärdaten.</p>
+  </section>
+
+  <script>
+    // Navigation
+    document.querySelectorAll('nav button').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+        document.getElementById(b.dataset.page).classList.add('active');
+      });
+    });
+
+    // Zahl submit
+    document.getElementById('frmNumber').addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const r = await fetch('/submit',{method:'POST', body:new URLSearchParams(fd)});
+      alert(await r.text());
+      e.target.reset();
+    });
+
+    // Login
+    document.getElementById('btnLogin').addEventListener('click', async ()=>{
+      const user = document.getElementById('user').value;
+      const pass = document.getElementById('pass').value;
+      const r = await fetch('/login',{method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({user, pass})});
+      const t = await r.json().catch(()=>({}));
+      if (t.token) {
+        localStorage.setItem('token', t.token);
+        document.getElementById('loginMsg').textContent = 'OK';
+      } else {
+        document.getElementById('loginMsg').textContent = 'Fehler';
+      }
+    });
+
+    // Sensor latest
+    document.getElementById('btnLoad').addEventListener('click', async ()=>{
+      const limit = document.getElementById('limit').value || 10;
+      const r = await fetch('/api/sensor/latest?limit='+encodeURIComponent(limit));
+      const j = await r.json();
+      const tbody = document.getElementById('latestBody'); tbody.innerHTML='';
+      (j.items||[]).forEach(it=>{
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${it.id}</td><td>${it.name}</td><td>${it.value}</td>`;
+        tbody.appendChild(tr);
+      });
+    });
+
+    // Live WebSocket + Chart
+    const canvas = document.getElementById('chart');
+    const ctx = canvas.getContext('2d');
+    const data = []; const MAX=100;
+    function draw() {
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      // Achsen
+      ctx.beginPath(); ctx.moveTo(40,10); ctx.lineTo(40,260); ctx.lineTo(790,260); ctx.stroke();
+      // Daten
+      if (data.length<2) return;
+      const min = Math.min(...data), max = Math.max(...data);
+      const range = (max-min)||1;
+      ctx.beginPath();
+      data.forEach((v,i)=>{
+        const x = 40 + i*(750/(MAX-1));
+        const y = 260 - ((v-min)/range)*240;
+        if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      });
+      ctx.stroke();
+    }
+    function pushValue(v){ data.push(v); if (data.length>MAX) data.shift(); draw(); }
+
+    let ws=null;
+    document.getElementById('btnWs').addEventListener('click', ()=>{
+      if (ws) { ws.close(); ws=null; return; }
+      const url = document.getElementById('wsUrl').value.trim();
+      ws = new WebSocket(url);
+      document.getElementById('wsStatus').textContent='Verbinde…';
+      ws.onopen = ()=>{
+        document.getElementById('wsStatus').textContent='Verbunden';
+        const token = localStorage.getItem('token')||'';
+        ws.send(JSON.stringify({cmd:'auth', token}));
+      };
+      ws.onmessage = (ev)=>{
+        // Erwartet simple Werte oder JSON {"value":42}
+        try{
+          const o = JSON.parse(ev.data);
+          if (o.echo) return;
+          if (o.value!=null) pushValue(Number(o.value));
+        }catch{
+          const num = Number(ev.data);
+          if (!Number.isNaN(num)) pushValue(num);
+        }
+      };
+      ws.onclose = ()=>document.getElementById('wsStatus').textContent='Getrennt';
+    });
+
+    // OTA
+    document.getElementById('btnOta').addEventListener('click', async ()=>{
+      const f = document.getElementById('fw').files[0];
+      if (!f) return;
+      const buf = await f.arrayBuffer();
+      const r = await fetch('/api/ota', { method:'PUT', body: new Uint8Array(buf) });
+      const j = await r.json().catch(()=>({}));
+      document.getElementById('otaMsg').textContent = j.status==='ok' ? 'Upload ok: '+(j.file||'') : 'Fehler';
+    });
+  </script>
+</body>
+</html>
+

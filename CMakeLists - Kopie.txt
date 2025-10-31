@@ -1,0 +1,105 @@
+cmake_minimum_required(VERSION 3.16)
+project(QtSecureServer LANGUAGES CXX)
+
+# C++17 aktivieren
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Qt6 Pakete
+find_package(Qt6 REQUIRED COMPONENTS
+    Core
+    Gui
+    Widgets
+    Network
+    Sql
+    WebSockets
+    StateMachine
+    Mqtt        # für MQTT
+    SerialBus   # für Modbus
+)
+
+# --- OpenSSL manuell einbinden (VC build) ---
+set(OPENSSL_ROOT_DIR "C:/Program Files/OpenSSL-Win64")
+set(OPENSSL_INCLUDE_DIR "${OPENSSL_ROOT_DIR}/include")
+# <- hier liegt bei dir die eigentliche Lib
+set(OPENSSL_LIB_DIR "${OPENSSL_ROOT_DIR}/lib/VC/x64/MD")
+
+include_directories("${OPENSSL_INCLUDE_DIR}")
+link_directories("${OPENSSL_LIB_DIR}")
+
+
+
+
+# -----------------------------------------
+# Hauptprogramm: QtSecureServer
+# -----------------------------------------
+
+# Sammle alle Quellen automatisch
+file(GLOB_RECURSE APP_SOURCES
+    src/main.cpp
+    src/ui/*.cpp
+    src/http/*.cpp
+    src/db/*.cpp
+    src/mqtt/*.cpp
+    src/modbus/*.cpp
+    src/common/*.cpp
+)
+
+file(GLOB_RECURSE APP_HEADERS
+    src/ui/*.h
+    src/http/*.h
+    src/db/*.h
+    src/mqtt/*.h
+    src/modbus/*.h
+    src/common/*.h
+)
+
+add_executable(${PROJECT_NAME}
+    ${APP_SOURCES}
+    ${APP_HEADERS}
+)
+
+target_link_libraries(${PROJECT_NAME}
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Widgets
+    Qt6::Network
+    Qt6::Sql
+    Qt6::WebSockets
+    Qt6::StateMachine
+    Qt6::Mqtt
+    Qt6::SerialBus
+    "${OPENSSL_LIB_DIR}/libssl.lib"
+        "${OPENSSL_LIB_DIR}/libcrypto.lib"
+)
+
+# Qt-Automoc/UIC/RCC aktivieren
+set_target_properties(${PROJECT_NAME} PROPERTIES
+    AUTOMOC ON
+    AUTOUIC ON
+    AUTORCC ON
+)
+
+# Windows: ohne extra Konsole
+if(WIN32)
+    set_target_properties(${PROJECT_NAME} PROPERTIES WIN32_EXECUTABLE TRUE)
+endif()
+
+# -----------------------------------------
+# Tools im Ordner src/tools
+# -----------------------------------------
+file(GLOB TOOL_SRCS CONFIGURE_DEPENDS src/tools/*.cpp)
+
+foreach(tool_src ${TOOL_SRCS})
+    get_filename_component(tool_name ${tool_src} NAME_WE)
+
+    add_executable(${tool_name}
+        ${tool_src}
+        src/http/jwt.cpp
+        src/http/jwt.h
+    )
+
+    target_link_libraries(${tool_name}
+        Qt6::Core
+    )
+endforeach()
